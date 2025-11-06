@@ -1,0 +1,642 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Disaster Relief — Resource Optimizer</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@fortawesome/fontawesome-free@6.7.2/js/all.min.js"></script>
+
+  <style>
+    :root {
+      --teal: #0d9488;
+      --bg: #F8F9FA;
+      --panel: #fff;
+      --muted: #6b7280;
+    }
+    html,body { height:100%; margin:0; font-family: Inter, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial; background:var(--bg); color:#111827; }
+    header { display:flex; justify-content:space-between; align-items:center; padding:12px 18px; background:var(--panel); border-bottom:1px solid #e6e6e6; box-shadow:0 1px 0 rgba(0,0,0,0.02); }
+    .brand { display:flex; gap:12px; align-items:center; }
+    .brand .logo { width:36px; height:36px; border-radius:8px; background:var(--teal); color:#fff; display:flex; align-items:center; justify-content:center; font-weight:700; }
+    main { display:flex; height:calc(100vh - 64px); }
+    aside.left { width:360px; padding:20px; background:var(--bg); box-sizing:border-box; overflow:auto; border-right:1px solid #eee; }
+    .card { background:var(--panel); border-radius:10px; padding:14px; margin-bottom:16px; box-shadow: 0 6px 18px rgba(0,0,0,0.04); }
+    label { display:block; font-size:13px; color:var(--muted); margin-bottom:6px; }
+    input[type="text"], input[type="number"], select { width:100%; padding:8px 10px; border-radius:8px; border:1px solid #e6e6e6; box-sizing:border-box; margin-bottom:8px; }
+    button { cursor:pointer; border:none; padding:8px 12px; border-radius:8px; }
+    button.primary { background:var(--teal); color:#fff; }
+    button.ghost { background:#f8f9fa; color:#111; border:1px solid #e6e6e6; }
+    .toggles label { display:flex; justify-content:space-between; align-items:center; gap:12px; font-size:14px; }
+    .map-wrap { flex:1; position:relative; }
+    #map { height:100%; width:100%; }
+    .metrics { position:absolute; top:18px; right:18px; width:320px; max-width:calc(50vw - 40px); z-index:5000; }
+    .metrics .card { padding:14px; }
+    .metrics h3 { margin:0 0 8px 0; font-size:16px; }
+    .small-muted { font-size:12px; color:var(--muted); }
+    .footer-hint { position:absolute; left:50%; transform:translateX(-50%); bottom:12px; background:rgba(255,255,255,0.9); padding:8px 12px; border-radius:10px; box-shadow:0 6px 18px rgba(0,0,0,0.08); z-index:2000; }
+    /* modal */
+    .modal-back { position:fixed; inset:0; background:rgba(0,0,0,0.35); display:flex; align-items:center; justify-content:center; z-index:6000; }
+    .modal { width:90%; max-width:900px; background:#fff; border-radius:10px; padding:18px; }
+    pre { background:#f7fafb; padding:12px; border-radius:8px; max-height:420px; overflow:auto; }
+    .progress { height:10px; background:#eee; border-radius:999px; overflow:hidden; }
+    .progress > i { display:block; height:100%; background:var(--teal); width:0%; transition:width 300ms linear; }
+    .small { font-size:13px; color:#333; }
+    .muted { color:var(--muted); font-size:13px; }
+
+    /* legend small */
+    .legend { position:absolute; right:12px; bottom:12px; z-index:5000; background:#fff; padding:8px 10px; border-radius:8px; box-shadow:0 6px 18px rgba(0,0,0,0.06);}
+    .legend div { display:flex; gap:8px; align-items:center; font-size:12px; color:#333; }
+    .legend .sw { width:14px; height:10px; border-radius:3px; }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="brand">
+      <div class="logo">DR</div>
+      <div>
+        <div style="font-weight:700">Disaster Relief — Resource Optimizer</div>
+        <div class="small-muted" style="font-size:12px">Demo — algorithms: greedy, maxflow, mincost, NN + 2/3-opt, Dijkstra, Prim</div>
+      </div>
+    </div>
+
+    <div style="display:flex;gap:12px;align-items:center;">
+      <div style="display:flex;gap:8px;align-items:center;"><div style="width:10px;height:10px;border-radius:99px;background:#10b981"></div><div class="muted">Backend reachable</div></div>
+      <button id="exportBtn" class="ghost">Export JSON</button>
+    </div>
+  </header>
+
+  <main>
+    <aside class="left">
+      <!-- Scenario -->
+      <div class="card">
+        <h3 style="margin:0 0 8px 0">Scenario</h3>
+        <label># Warehouses</label>
+        <input id="nw" type="number" value="3" min="1" />
+        <label># Zones</label>
+        <input id="nz" type="number" value="12" min="1" />
+        <label>Seed</label>
+        <input id="seed" type="number" value="42" />
+        <button id="genBtn" class="primary" style="width:100%;margin-top:8px">Generate Scenario</button>
+      </div>
+
+      <!-- Scheduler -->
+      <div class="card">
+        <h3 style="margin:0 0 8px 0">Scheduler</h3>
+        <div style="display:flex;gap:8px;margin-bottom:8px">
+          <button id="modeOptimized" class="ghost">Optimized</button>
+          <button id="modeNaive" class="ghost">Naive</button>
+          <button id="modeCompare" class="ghost">Compare</button>
+        </div>
+
+        <label>Assignment algorithm</label>
+        <select id="assignmentSelect">
+          <option value="greedy">Greedy (fast)</option>
+          <option value="maxflow">Maxflow (Edmonds-Karp)</option>
+          <option value="mincost">Min-cost flow</option>
+        </select>
+
+        <label>Routing optimization</label>
+        <select id="routingSelect">
+          <option value="2opt">2-opt</option>
+          <option value="3opt">3-opt</option>
+          <option value="none">None (NN)</option>
+        </select>
+
+        <label>Clustering</label>
+        <select id="clusteringSelect">
+          <option value="none">none</option>
+          <option value="kmeans">kmeans</option>
+        </select>
+
+        <div style="display:flex;gap:8px;margin-top:10px">
+          <button id="runBtn" class="primary" style="flex:1">Run Scheduler</button>
+          <button id="stressBtn" class="ghost" style="flex:1">Run Stress Test</button>
+        </div>
+
+        <label style="margin-top:10px">Show routes from</label>
+        <select id="showRoutesFrom">
+          <option value="all">All</option>
+          <option value="optimized">Optimized only</option>
+          <option value="naive">Naive only</option>
+        </select>
+      </div>
+
+      <!-- Visual toggles -->
+      <div class="card">
+        <h3 style="margin:0 0 8px 0">Visual Toggles</h3>
+        <div class="toggles" style="display:grid;gap:8px">
+          <label><span>Show Warehouses</span><input id="toggleWarehouses" type="checkbox" checked /></label>
+          <label><span>Show Zones</span><input id="toggleZones" type="checkbox" checked /></label>
+          <label><span>Show Routes</span><input id="toggleRoutes" type="checkbox" checked /></label>
+          <label><span>Show MST / Shortest</span><input id="toggleExtras" type="checkbox" checked /></label>
+          <label><span>Show Vehicle Popups</span><input id="togglePopups" type="checkbox" checked /></label>
+        </div>
+        <label style="margin-top:8px">Min Utilization % (hide low util routes)</label>
+        <input id="minUtil" type="range" min="0" max="100" value="0" />
+      </div>
+
+      <!-- Export & explain -->
+      <div class="card">
+        <h3 style="margin:0 0 8px 0">Export & Explain</h3>
+        <div style="display:flex;gap:8px">
+          <button id="exportJsonBtn" class="ghost">Export JSON</button>
+          <button id="showDpBtn" class="ghost">Show DP Table</button>
+        </div>
+      </div>
+
+      <!-- Stress summary -->
+      <div class="card" id="stressSummary" style="display:none">
+        <h4 style="margin:0 0 8px 0">Stress Test Summary</h4>
+        <div id="stressResults" class="muted small">...</div>
+      </div>
+    </aside>
+
+    <div class="map-wrap">
+      <div id="map"></div>
+
+      <div class="metrics" id="metricsPanel" style="display:none">
+        <div class="card">
+          <div style="display:flex;justify-content:space-between;align-items:start">
+            <div>
+              <h3 style="margin:0">Performance Metrics</h3>
+              <div class="small-muted">Runtime Breakdown</div>
+            </div>
+            <div class="small-muted"> </div>
+          </div>
+
+          <div style="margin-top:8px">
+            <div class="small">Total supply: <b id="m_supply">-</b> kg</div>
+            <div class="small">Total demand: <b id="m_demand">-</b> kg</div>
+            <div class="small">Total assigned: <b id="m_assigned">-</b> kg</div>
+            <div class="small">Unmet: <b id="m_unmet">-</b> kg</div>
+          </div>
+
+          <div style="margin-top:10px">
+            <div class="small-muted">Assign time (s): <b id="m_assign">-</b></div>
+            <div class="small-muted">Knapsack (s): <b id="m_knap">-</b></div>
+            <div class="small-muted">Routing (s): <b id="m_route">-</b></div>
+          </div>
+
+          <div style="margin-top:10px">
+            <div class="small">Naive cost: <b id="m_naive">-</b></div>
+            <div class="small">Optimized cost: <b id="m_opt">-</b></div>
+            <div class="small">Improvement: <b id="m_imp">-</b>%</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="footer-hint">Explainability — click any route to view its Knapsack, ETA & Utilization</div>
+
+      <div class="legend" id="legend">
+        <div><span class="sw" style="background:#0d9488"></span> Warehouses</div>
+        <div><span class="sw" style="background:orange"></span> Zones (priority)</div>
+        <div><span class="sw" style="background:blue"></span> Routes</div>
+      </div>
+    </div>
+  </main>
+
+  <!-- DP Modal -->
+  <div id="dpModalWrap" style="display:none" class="modal-back">
+    <div class="modal">
+      <h3 id="dpTitle">Knapsack details</h3>
+      <div id="dpContent"><pre id="dpPre">No knapsack yet</pre></div>
+      <div style="text-align:right;margin-top:10px">
+        <button id="closeDp" class="primary">Close</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Stress Modal -->
+  <div id="stressModalWrap" style="display:none" class="modal-back">
+    <div class="modal">
+      <h3>Stress Test</h3>
+      <div style="margin:8px 0" class="muted">Running multiple scenario/schedule iterations to measure average performance.</div>
+      <label>Runs</label>
+      <input id="stressRuns" type="number" value="10" min="1" />
+      <label style="margin-top:8px">Assignment</label>
+      <select id="stressAssign">
+        <option value="greedy">greedy</option>
+        <option value="maxflow">maxflow</option>
+        <option value="mincost">mincost</option>
+      </select>
+      <div style="margin-top:10px">
+        <div class="progress" style="margin-bottom:8px"><i id="stressProgress"></i></div>
+        <div id="stressStatus" class="muted small">Idle</div>
+      </div>
+      <div style="text-align:right;margin-top:10px">
+        <button id="startStress" class="primary">Start</button>
+        <button id="closeStress" class="ghost">Close</button>
+      </div>
+    </div>
+  </div>
+
+<script>
+  /* ============ CONFIG ============ */
+  const API_BASE = 'http://localhost:8000'; // backend must be running on this base
+
+  /* ============ MAP INIT ============ */
+  const map = L.map('map', { zoomControl: true }).setView([13.0827,80.2707], 11);
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom:19 }).addTo(map);
+
+  // layer groups
+  const layerWarehouses = L.layerGroup().addTo(map);
+  const layerZones = L.layerGroup().addTo(map);
+  const layerRoutes = L.layerGroup().addTo(map);
+  const layerExtras = L.layerGroup().addTo(map); // MST, shortest path
+
+  // UI elements
+  const genBtn = document.getElementById('genBtn');
+  const runBtn = document.getElementById('runBtn');
+  const exportBtn = document.getElementById('exportBtn');
+  const exportJsonBtn = document.getElementById('exportJsonBtn');
+  const showDpBtn = document.getElementById('showDpBtn');
+  const dpModalWrap = document.getElementById('dpModalWrap');
+  const dpPre = document.getElementById('dpPre');
+  const closeDp = document.getElementById('closeDp');
+  const metricsPanel = document.getElementById('metricsPanel');
+  const stressBtn = document.getElementById('stressBtn');
+  const stressModalWrap = document.getElementById('stressModalWrap');
+  const closeStress = document.getElementById('closeStress');
+  const startStress = document.getElementById('startStress');
+  const stressProgress = document.getElementById('stressProgress');
+  const stressStatus = document.getElementById('stressStatus');
+  const stressSummaryCard = document.getElementById('stressSummary');
+  const stressResults = document.getElementById('stressResults');
+
+  // metrics nodes
+  const setMetric = (id, v) => { const el = document.getElementById(id); if (el) el.innerText = v; };
+
+  // controls and toggles
+  const toggleWarehouses = document.getElementById('toggleWarehouses');
+  const toggleZones = document.getElementById('toggleZones');
+  const toggleRoutes = document.getElementById('toggleRoutes');
+  const toggleExtras = document.getElementById('toggleExtras');
+  const togglePopups = document.getElementById('togglePopups');
+  const minUtil = document.getElementById('minUtil');
+  const assignmentSelect = document.getElementById('assignmentSelect');
+  const routingSelect = document.getElementById('routingSelect');
+  const clusteringSelect = document.getElementById('clusteringSelect');
+  const nwEl = document.getElementById('nw');
+  const nzEl = document.getElementById('nz');
+  const seedEl = document.getElementById('seed');
+  const showRoutesFrom = document.getElementById('showRoutesFrom');
+
+  // state
+  let lastScenario = null;
+  let lastSchedule = null;
+  let layerRouteObjects = []; // keep data about each route polyline and its vehicle props
+
+  /* ============ HELPERS ============ */
+  async function apiGet(path) {
+    try {
+      const res = await fetch(API_BASE + path);
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+      return await res.json();
+    } catch (e) {
+      throw e;
+    }
+  }
+  async function apiPost(path, body = null) {
+    try {
+      const opts = { method:'POST', headers:{} };
+      if (body !== null) {
+        opts.headers['Content-Type'] = 'application/json';
+        opts.body = JSON.stringify(body);
+      }
+      const res = await fetch(API_BASE + path, opts);
+      if (!res.ok) {
+        const txt = await res.text().catch(()=>null);
+        throw new Error('HTTP ' + res.status + ' ' + txt);
+      }
+      return await res.json();
+    } catch(e) {
+      throw e;
+    }
+  }
+
+  function pop(msg) {
+    alert(msg);
+  }
+
+  function clearLayers() {
+    layerWarehouses.clearLayers();
+    layerZones.clearLayers();
+    layerRoutes.clearLayers();
+    layerExtras.clearLayers();
+    layerRouteObjects = [];
+  }
+
+  // Build layers and do fitBounds safely
+  function renderScenario(scn) {
+    lastScenario = scn;
+    clearLayers();
+
+    // warehouses
+    if (scn?.warehouses && toggleWarehouses.checked) {
+      scn.warehouses.forEach(w => {
+        const m = L.marker([w.lat, w.lon]);
+        if (togglePopups.checked) {
+          m.bindPopup(`<b>${w.id}</b><br/>Stock:<ul>${Object.entries(w.stock).map(([k,v])=>`<li>${k}: ${v}</li>`).join('')}</ul>`);
+        }
+        layerWarehouses.addLayer(m);
+      });
+    }
+
+    // zones
+    if (scn?.zones && toggleZones.checked) {
+      scn.zones.forEach(z => {
+        const rad = Math.min(1000, (z.demand.water + z.demand.food + z.demand.med) * 20);
+        const color = z.priority > 7 ? 'red' : (z.priority > 4 ? 'orange' : 'yellow');
+        const c = L.circle([z.lat,z.lon], { radius: rad, color, weight:2, fillOpacity:0.25 });
+        if (togglePopups.checked) {
+          c.bindPopup(`<b>${z.id}</b><br/>Priority: ${z.priority}<br/>Demand: water ${z.demand.water}, food ${z.demand.food}, med ${z.demand.med}`);
+        }
+        layerZones.addLayer(c);
+      });
+    }
+
+    // Fit bounds safely: only if we actually have leaflets in groups
+    const all = L.featureGroup();
+    layerWarehouses.eachLayer(l => all.addLayer(l));
+    layerZones.eachLayer(l => all.addLayer(l));
+    // add no-route placeholder if still empty? No: we just skip fit
+    if (all.getLayers().length > 0) {
+      try {
+        const b = all.getBounds();
+        if (b && typeof b.isValid === 'function' ? b.isValid() : true) {
+          map.fitBounds(b.pad(0.15));
+        }
+      } catch(e) {
+        // fallback to default view
+        map.setView([13.0827,80.2707], 11);
+      }
+    } else {
+      map.setView([13.0827,80.2707], 11);
+    }
+  }
+
+  function renderSchedule(schedule) {
+    lastSchedule = schedule;
+    clearLayers();
+
+    // always render scenario (warehouses/zones) from schedule (if present) for consistent view
+    const scn = lastScenario || {};
+    if (scn?.warehouses && toggleWarehouses.checked) {
+      scn.warehouses.forEach(w => {
+        const m = L.marker([w.lat, w.lon]);
+        if (togglePopups.checked) {
+          m.bindPopup(`<b>${w.id}</b><br/>Stock:<ul>${Object.entries(w.stock).map(([k,v])=>`<li>${k}: ${v}</li>`).join('')}</ul>`);
+        }
+        layerWarehouses.addLayer(m);
+      });
+    }
+    if (scn?.zones && toggleZones.checked) {
+      scn.zones.forEach(z => {
+        const rad = Math.min(1000, (z.demand.water + z.demand.food + z.demand.med) * 20);
+        const color = z.priority > 7 ? 'red' : (z.priority > 4 ? 'orange' : 'yellow');
+        const c = L.circle([z.lat,z.lon], { radius: rad, color, weight:2, fillOpacity:0.25 });
+        if (togglePopups.checked) {
+          c.bindPopup(`<b>${z.id}</b><br/>Priority: ${z.priority}<br/>Demand: water ${z.demand.water}, food ${z.demand.food}, med ${z.demand.med}`);
+        }
+        layerZones.addLayer(c);
+      });
+    }
+
+    // draw features from geojson
+    const gj = schedule?.geojson;
+    if (gj && Array.isArray(gj.features)) {
+      gj.features.forEach(f => {
+        try {
+          if (!f.geometry) return;
+          if (f.geometry.type === 'Point') {
+            const [lon, lat] = f.geometry.coordinates;
+            const props = f.properties || {};
+            // we already drew warehouses/zones from scenario; draw unknown points as small markers
+            if (!['warehouse','zone'].includes(props.type)) {
+              const mk = L.circleMarker([lat, lon], { radius:6, fillColor:'#0d9488', color:'#fff', weight:1 });
+              layerZones.addLayer(mk);
+            }
+          } else if (f.geometry.type === 'LineString') {
+            const coords = f.geometry.coordinates.map(c => [c[1], c[0]]);
+            const props = f.properties || {};
+            if (props.type === 'route') {
+              const util = (props.utilization_pct !== undefined) ? Number(props.utilization_pct) : 0;
+              if (util < Number(minUtil.value)) return; // filter by util
+              const color = '#1e90ff';
+              const pl = L.polyline(coords, { color, weight:4, opacity:0.9 });
+              pl.bindTooltip(`Vehicle: ${props.vehicle} — route ${props.route_len_km ?? '-'} km — util ${props.utilization_pct ?? '-'}%`);
+              pl.on('click', () => {
+                const kn = props.knapsack || schedule?.sample_knapsack_vehicle?.knapsack;
+                showDpModal(props.vehicle, kn, props);
+              });
+              layerRoutes.addLayer(pl);
+              layerRouteObjects.push({ poly:pl, props });
+            } else if (props.type === 'shortest_path') {
+              const pl = L.polyline(coords, { color:'#00b37a', weight:4, dashArray:'8 6' });
+              layerExtras.addLayer(pl);
+            } else if (props.type === 'mst_edge') {
+              const pl = L.polyline(f.geometry.coordinates.map(c=>[c[1],c[0]]), { color:'#ff9900', weight:3, dashArray:'3 6', opacity:0.9 });
+              layerExtras.addLayer(pl);
+            } else {
+              // generic polyline fallback
+              const pl = L.polyline(coords, { color:'#999', weight:2, opacity:0.6 });
+              layerExtras.addLayer(pl);
+            }
+          }
+        } catch(e) {
+          console.warn('feature render failed', e, f);
+        }
+      });
+    }
+
+    // fit to all visible layers (only if they contain actual leaflet layers)
+    const all = L.featureGroup();
+    layerWarehouses.eachLayer(l => all.addLayer(l));
+    layerZones.eachLayer(l => all.addLayer(l));
+    if (toggleRoutes.checked) layerRoutes.eachLayer(l => all.addLayer(l));
+    if (toggleExtras.checked) layerExtras.eachLayer(l => all.addLayer(l));
+
+    if (all.getLayers().length > 0) {
+      try {
+        const b = all.getBounds();
+        if (b && typeof b.isValid === 'function' ? b.isValid() : true) {
+          map.fitBounds(b.pad(0.12));
+        }
+      } catch (e) {
+        map.setView([13.0827,80.2707], 11);
+      }
+    } else {
+      map.setView([13.0827,80.2707], 11);
+    }
+
+    // update metrics
+    if (schedule?.metrics) {
+      metricsPanel.style.display = 'block';
+      setMetric('m_supply', schedule.metrics.total_supply_kg ?? '-');
+      setMetric('m_demand', schedule.metrics.total_demand_kg ?? '-');
+      setMetric('m_assigned', schedule.metrics.total_assigned_kg ?? '-');
+      setMetric('m_unmet', schedule.metrics.unmet_kg ?? '-');
+      setMetric('m_assign', schedule.metrics.assign_time_s ?? '-');
+      setMetric('m_knap', schedule.metrics.knapsack_time_s ?? '-');
+      setMetric('m_route', schedule.metrics.route_time_s ?? '-');
+      setMetric('m_naive', schedule.metrics.naive_cost ?? '-');
+      setMetric('m_opt', schedule.metrics.optimized_cost ?? '-');
+      setMetric('m_imp', schedule.metrics.improvement_pct ?? 0);
+    } else {
+      metricsPanel.style.display = 'none';
+    }
+  }
+
+  function showDpModal(vehicle, knObj, props = {}) {
+    document.getElementById('dpTitle').innerText = `Knapsack details — ${vehicle || 'vehicle'}`;
+    dpPre.innerText = JSON.stringify({ knapsack: knObj, props }, null, 2);
+    dpModalWrap.style.display = 'flex';
+  }
+
+  /* ============ UI EVENTS ============ */
+  genBtn.addEventListener('click', async () => {
+    const nw = Number(nwEl.value)||3, nz = Number(nzEl.value)||12, seed = Number(seedEl.value)||42;
+    genBtn.disabled = true; genBtn.innerText = 'Generating...';
+    try {
+      const sc = await apiGet(`/generate?nw=${nw}&nz=${nz}&seed=${seed}`);
+      lastScenario = sc;
+      renderScenario(sc);
+    } catch (e) {
+      console.error(e);
+      pop('Generate failed; is backend running?');
+    } finally {
+      genBtn.disabled = false; genBtn.innerText = 'Generate Scenario';
+    }
+  });
+
+  runBtn.addEventListener('click', async () => {
+    if (!lastScenario) return pop('Generate scenario first');
+    runBtn.disabled = true; runBtn.innerText = 'Running...';
+    try {
+      const mode = document.getElementById('modeOptimized').classList.contains('active') ? 'Optimized' :
+                   document.getElementById('modeNaive').classList.contains('active') ? 'Naive' : 'Optimized';
+      const assignment = assignmentSelect.value;
+      const routing_opt = routingSelect.value;
+      const clustering = clusteringSelect.value;
+      // include extras flags depending on toggles
+      const include_floyd = toggleExtras.checked;
+      const include_bellman = toggleExtras.checked;
+      // call schedule (POST) with query params in URL for simplicity
+      const q = `?mode=${mode}&assignment=${assignment}&routing_opt=${routing_opt}&clustering=${clustering}&include_floyd=${include_floyd}&include_bellman=${include_bellman}`;
+      const result = await apiPost(`/schedule${q}`, null);
+      lastSchedule = result;
+      renderSchedule(result);
+    } catch (e) {
+      console.error(e);
+      pop('Schedule failed — is backend running? Check console.');
+    } finally {
+      runBtn.disabled = false; runBtn.innerText = 'Run Scheduler';
+    }
+  });
+
+  // Export JSON (schedule)
+  exportJsonBtn.addEventListener('click', () => {
+    if (!lastSchedule) return pop('Run scheduler first');
+    const blob = new Blob([JSON.stringify(lastSchedule, null, 2)], { type:'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a'); a.href = url; a.download = 'schedule_result.json'; a.click();
+    URL.revokeObjectURL(url);
+  });
+  exportBtn.addEventListener('click', () => exportJsonBtn.click());
+
+  // DP modal
+  showDpBtn.addEventListener('click', () => {
+    if (!lastSchedule) return pop('Run scheduler first');
+    if (!lastSchedule.sample_knapsack_vehicle) return pop('No knapsack sample in schedule output');
+    showDpModal(lastSchedule.sample_knapsack_vehicle.vehicle || 'sample', lastSchedule.sample_knapsack_vehicle.knapsack, lastSchedule.sample_knapsack_vehicle);
+  });
+  closeDp.addEventListener('click', ()=> dpModalWrap.style.display = 'none');
+
+  // toggles - show/hide layers
+  toggleWarehouses.addEventListener('change', ()=> {
+    if (toggleWarehouses.checked) layerWarehouses.addTo(map); else layerWarehouses.remove();
+  });
+  toggleZones.addEventListener('change', ()=> {
+    if (toggleZones.checked) layerZones.addTo(map); else layerZones.remove();
+  });
+  toggleRoutes.addEventListener('change', ()=> {
+    if (toggleRoutes.checked) layerRoutes.addTo(map); else layerRoutes.remove();
+  });
+  toggleExtras.addEventListener('change', ()=> {
+    if (toggleExtras.checked) layerExtras.addTo(map); else layerExtras.remove();
+  });
+  togglePopups.addEventListener('change', ()=> {
+    // re-render to refresh popups
+    if (lastSchedule) renderSchedule(lastSchedule); else if (lastScenario) renderScenario(lastScenario);
+  });
+  minUtil.addEventListener('change', ()=> {
+    if (lastSchedule) renderSchedule(lastSchedule);
+  });
+
+  // mode buttons UI convenience
+  const modeButtons = [document.getElementById('modeOptimized'), document.getElementById('modeNaive'), document.getElementById('modeCompare')];
+  modeButtons.forEach(btn => {
+    btn.addEventListener('click', () => {
+      modeButtons.forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      // style active
+      modeButtons.forEach(b => b.style.border = b.classList.contains('active') ? '2px solid var(--teal)' : '1px solid #e6e6e6');
+      modeButtons.forEach(b => b.style.background = b.classList.contains('active') ? '#ecfdf5' : '#fff');
+    });
+  });
+  // set default active
+  modeButtons[0].click();
+
+  /* ============ Stress test ============ */
+  stressBtn.addEventListener('click', ()=> {
+    stressModalWrap.style.display = 'flex';
+    stressProgress.style.width = '0%';
+    stressStatus.innerText = 'Configure and start';
+  });
+  closeStress.addEventListener('click', ()=> stressModalWrap.style.display = 'none');
+
+  startStress.addEventListener('click', async () => {
+    const runs = Number(document.getElementById('stressRuns').value) || 10;
+    const assignment = document.getElementById('stressAssign').value || 'greedy';
+    startStress.disabled = true;
+    stressStatus.innerText = 'Starting...';
+    try {
+      // call backend /stress
+      const res = await apiPost(`/stress?n=${runs}&nw=${Number(nwEl.value)||3}&nz=${Number(nzEl.value)||12}&seed=${Date.now()%10000}&assignment=${assignment}`, null);
+      stressStatus.innerText = 'Finished';
+      stressProgress.style.width = '100%';
+      stressSummaryCard.style.display = 'block';
+      stressResults.innerText = JSON.stringify(res, null, 2);
+      // display summary in left panel
+      stressModalWrap.style.display = 'none';
+    } catch (e) {
+      console.error(e);
+      pop('Stress test failed; check backend logs or connection.');
+    } finally {
+      startStress.disabled = false;
+    }
+  });
+
+  /* ============ INIT demo auto-generate (optional) ============ */
+  // try to generate a default scenario at load to make it obvious
+  (async function initDemo() {
+    try {
+      const sc = await apiGet('/generate?nw=3&nz=12&seed=42');
+      lastScenario = sc;
+      renderScenario(sc);
+    } catch (e) {
+      console.warn('Initial generate failed; backend might be down. You can still use UI to try again when backend starts.');
+    }
+  })();
+
+  /* ============ Global error handler for easier debugging ============
+     If anything else throws we log to console. Keep as-is for dev-time.
+  */
+  window.addEventListener('error', (ev) => {
+    console.error('Runtime error', ev.error || ev.message);
+  });
+
+</script>
+</body>
+</html>
